@@ -6,23 +6,10 @@ import (
 	"os"
 )
 
-/*
-64/32 (display res)
-
-4096 memory
-
-addresses start at 512 typically (but modern can use it, most use it for fontset data)
-
-top 256 bytes == display refresh
-
-96 bytes below === call stack, internal, other vars
-
-*/
-
 var (
 	opcode         uint16
 	memory         [4096]byte
-	registers      [16]byte
+	registers      [16]uint16
 	indexRegister  uint16
 	programCounter uint16
 	display        [64 * 32]bool
@@ -31,6 +18,7 @@ var (
 	stack          [16]uint16
 	stackPointer   uint16
 	key            [16]byte
+	ticks          int
 )
 
 var fontset = [80]byte{
@@ -64,7 +52,7 @@ func main() {
 
 	running := true
 
-	for running == true {
+	for running == true && ticks < 255 {
 		fmt.Println("Emulating....")
 
 		emulate()
@@ -74,31 +62,48 @@ func main() {
 			render()
 		}
 
-		running = false
-
 		handleInput()
+		ticks++
 	}
+
+	fmt.Println("Exiting...")
 
 }
 
-func emulate() {
+func processOpcode() {
 	//Fetch opcode
-
 	// memory is 4096 bytes, opcode is 2 bytes, so we pull two addresses and combine them
 	// Shift first to the left 8bits, or it with the next
 	opcode = uint16(memory[programCounter])<<8 | uint16(memory[programCounter+1])
 
-	//Decode opcode (zero out the last 4 bits to handle cases like ANNN)
-	switch opcode & 0xF000 {
-	case 0x0000:
-		switch opcode & 0x000F {
-		case 0x0000: //Clear screen
-		case 0x000E: //returns from subroutine
+	digits := [...]uint16{
+		opcode & 0xF000 >> 12,
+		opcode & 0x0F00 >> 8,
+		opcode & 0x00F0 >> 4,
+		opcode & 0x000F,
+	}
 
-		default:
-			fmt.Printf("Unknown opcode [0x0000]: 0x:%X\n", opcode)
+	fmt.Printf("%X\n", digits)
+
+	masked := [...]uint16{
+		opcode & 0xF000,
+		opcode & 0xF00F,
+		opcode & 0xF0FF,
+	}
+
+	switch masked[0] {
+
+	case 0x0000:
+		switch opcode {
+		case 0x00E0: // 00E0
+
+		case 0x00EE: // 00EE
+		default: // 0NNN
+
 		}
-	case 0x2000:
+	case 0x1000: // 1NNN
+
+	case 0x2000: // 2NNN
 		//Run a subroutine,
 		//First store the current prog counter in the stack so we can track it later
 		stack[stackPointer] = programCounter
@@ -107,25 +112,96 @@ func emulate() {
 		//set program counter to point to the subroutine
 		programCounter = opcode & 0x0FFF
 		//^ Assume when the subroutine flow finishes, we pop the stack onto the prog counter and continue
+		return
+	case 0x3000: // 3XNN
 
-	case 0xA000: // ANNN Sets I to the address NNN
+	case 0x4000: // 4XNN
+
+	case 0x5000: // 5XY0
+
+	case 0x6000: // 6XNN
+		// Sets VX to NN
+		//Execute Opcode
+		registers[digits[1]] = digits[2] + digits[3]
+		//Bump the program counter
+		programCounter += 2
+		return
+
+	case 0x7000: // 7XNN
+
+	case 0x8000:
+		switch masked[1] {
+		case 0x8000: // 8XY0
+
+		case 0x8001: // 8XY1
+
+		case 0x8002: // 8XY2
+
+		case 0x8003: // 8XY3
+
+		case 0x8004: // 8XY4
+
+		case 0x8005: // 8XY5
+
+		case 0x8006: // 8XY6
+
+		case 0x8007: // 8XY7
+
+		case 0x800E: // 8XYE
+
+		}
+	case 0x9000: // 9XY0
+
+	case 0xA000: // ANNN
+		// ANNN Sets I to the address NNN
 		//Execute Opcode
 		indexRegister = opcode & 0x0FFF //zero out A?
 		//Bump the program counter
 		programCounter += 2
-	case 0x8000: //adds VX to VY
+		return
+	case 0xC000: // CXNN
 
-		x := opcode & 0x0F00 >> 8 //Shift twice to get true value
-		y := opcode & 0x00F0 >> 4 //shift once for true value
+	case 0xD000: // DXYN
 
-		registers[x] += registers[y]
-		programCounter += 2
+	case 0xE000:
+		switch masked[2] {
+		case 0xE09E: // EX9E
 
-	default:
-		fmt.Printf("Unknown opcode: 0x%X\n", opcode)
+		case 0xE0A1: // EXA1
+
+		}
+	case 0xF000:
+		switch masked[2] {
+		case 0xF007: // FX07
+
+		case 0xF00A: // FX0A
+
+		case 0xF015: // FX15
+
+		case 0xF018: // FX18
+
+		case 0xF01E: // FX1E
+
+		case 0xF029: // FX29
+
+		case 0xF033: // FX33
+
+		case 0xF055: // FX55
+
+		case 0xF065: // FX65
+
+		}
 	}
 
-	//Update timers
+	panic(fmt.Sprintf("Unsupported opcode: %X", opcode))
+}
+
+func emulate() {
+	processOpcode()
+	updateTimers()
+}
+
+func updateTimers() {
 	if delayTimer > 0 {
 		delayTimer--
 	}
@@ -136,7 +212,6 @@ func emulate() {
 		}
 		soundTimer--
 	}
-
 }
 
 func render() {
