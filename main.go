@@ -54,7 +54,6 @@ var fontset = [80]byte{
 
 func main() {
 
-
 	fmt.Println("CHIP-8 emulator")
 
 	setupGraphics()
@@ -87,8 +86,7 @@ func emulate() {
 
 	// memory is 4096 bytes, opcode is 2 bytes, so we pull two addresses and combine them
 	// Shift first to the left 8bits, or it with the next
-	opcode = uint16(memory[programCounter]) << 8 | uint16(memory[programCounter+1])
-
+	opcode = uint16(memory[programCounter])<<8 | uint16(memory[programCounter+1])
 
 	//Decode opcode (zero out the last 4 bits to handle cases like ANNN)
 	switch opcode & 0xF000 {
@@ -96,7 +94,7 @@ func emulate() {
 		switch opcode & 0x000F {
 		case 0x0000: //Clear screen
 		case 0x000E: //returns from subroutine
-		
+
 		default:
 			fmt.Printf("Unknown opcode [0x0000]: 0x:%X\n", opcode)
 		}
@@ -109,18 +107,17 @@ func emulate() {
 		//set program counter to point to the subroutine
 		programCounter = opcode & 0x0FFF
 		//^ Assume when the subroutine flow finishes, we pop the stack onto the prog counter and continue
-	
-		
+
 	case 0xA000: // ANNN Sets I to the address NNN
 		//Execute Opcode
 		indexRegister = opcode & 0x0FFF //zero out A?
 		//Bump the program counter
 		programCounter += 2
 	case 0x8000: //adds VX to VY
-		
+
 		x := opcode & 0x0F00 >> 8 //Shift twice to get true value
 		y := opcode & 0x00F0 >> 4 //shift once for true value
-		
+
 		registers[x] += registers[y]
 		programCounter += 2
 
