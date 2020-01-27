@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"log"
+	"os"
 )
 
 /*
@@ -53,6 +53,8 @@ var fontset = [80]byte{
 }
 
 func main() {
+
+
 	fmt.Println("CHIP-8 emulator")
 
 	setupGraphics()
@@ -85,16 +87,59 @@ func emulate() {
 
 	// memory is 4096 bytes, opcode is 2 bytes, so we pull two addresses and combine them
 	// Shift first to the left 8bits, or it with the next
-	opcode = uint16(memory[programCounter])<<8 | uint16(memory[programCounter+1])
+	opcode = uint16(memory[programCounter]) << 8 | uint16(memory[programCounter+1])
 
-	//Decode opcode
 
-	//Execute Opcode
+	//Decode opcode (zero out the last 4 bits to handle cases like ANNN)
+	switch opcode & 0xF000 {
+	case 0x0000:
+		switch opcode & 0x000F {
+		case 0x0000: //Clear screen
+		case 0x000E: //returns from subroutine
+		
+		default:
+			fmt.Printf("Unknown opcode [0x0000]: 0x:%X\n", opcode)
+		}
+	case 0x2000:
+		//Run a subroutine,
+		//First store the current prog counter in the stack so we can track it later
+		stack[stackPointer] = programCounter
+		//Bump the stack pointer (same thing as we do with prog counter)
+		stackPointer++
+		//set program counter to point to the subroutine
+		programCounter = opcode & 0x0FFF
+		//^ Assume when the subroutine flow finishes, we pop the stack onto the prog counter and continue
+	
+		
+	case 0xA000: // ANNN Sets I to the address NNN
+		//Execute Opcode
+		indexRegister = opcode & 0x0FFF //zero out A?
+		//Bump the program counter
+		programCounter += 2
+	case 0x8000: //adds VX to VY
+		
+		x := opcode & 0x0F00 >> 8 //Shift twice to get true value
+		y := opcode & 0x00F0 >> 4 //shift once for true value
+		
+		registers[x] += registers[y]
+		programCounter += 2
 
-	//Bump the program counter
-	programCounter += 2
+	default:
+		fmt.Printf("Unknown opcode: 0x%X\n", opcode)
+	}
 
 	//Update timers
+	if delayTimer > 0 {
+		delayTimer--
+	}
+
+	if soundTimer > 0 {
+		if soundTimer == 1 {
+			fmt.Println("BEEP!")
+		}
+		soundTimer--
+	}
+
 }
 
 func render() {
@@ -117,12 +162,15 @@ func initialize() {
 
 	fmt.Println("Initializing")
 
-	programCounter = 0x200
+	programCounter = 0x200 //512
 	opcode = 0
 	indexRegister = 0
 	stackPointer = 0
 
 	// Clear display
+	for i := 0; i < cap(display); i++ {
+		display[i] = false
+	}
 
 	// Clear stack
 	for i := 0; i < cap(stack); i++ {
@@ -138,7 +186,7 @@ func initialize() {
 	for i := 0; i < cap(memory); i++ {
 		memory[i] = 0
 	}
-	
+
 	// Load fontset
 	for i := 0; i < cap(fontset); i++ {
 		memory[i] = fontset[i]
