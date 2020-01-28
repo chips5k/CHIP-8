@@ -8,8 +8,8 @@ import (
 
 var (
 	opcode         uint16
-	memory         [4096]byte
-	registers      [16]uint16
+	memory         [4096]uint8
+	registers      [16]uint8
 	indexRegister  uint16
 	programCounter uint16
 	display        [64 * 32]bool
@@ -76,22 +76,7 @@ func processOpcode() {
 	// Shift first to the left 8bits, or it with the next
 	opcode = uint16(memory[programCounter])<<8 | uint16(memory[programCounter+1])
 
-	digits := [...]uint16{
-		opcode & 0xF000 >> 12,
-		opcode & 0x0F00 >> 8,
-		opcode & 0x00F0 >> 4,
-		opcode & 0x000F,
-	}
-
-	fmt.Printf("%X\n", digits)
-
-	masked := [...]uint16{
-		opcode & 0xF000,
-		opcode & 0xF00F,
-		opcode & 0xF0FF,
-	}
-
-	switch masked[0] {
+	switch opcode & 0xF000 {
 
 	case 0x0000:
 		switch opcode {
@@ -103,8 +88,7 @@ func processOpcode() {
 		}
 	case 0x1000: // 1NNN
 
-	case 0x2000: // 2NNN
-		//Run a subroutine,
+	case 0x2000: // 2NNN - Runs a subroutine
 		//First store the current prog counter in the stack so we can track it later
 		stack[stackPointer] = programCounter
 		//Bump the stack pointer (same thing as we do with prog counter)
@@ -119,18 +103,22 @@ func processOpcode() {
 
 	case 0x5000: // 5XY0
 
-	case 0x6000: // 6XNN
-		// Sets VX to NN
-		//Execute Opcode
-		registers[digits[1]] = digits[2] + digits[3]
-		//Bump the program counter
+	case 0x6000: // 6XNN - Sets VX to NN
+		
+		//extract x (shift to get true value)
+		x := opcode & 0x0F00 >> 8
+		//extract NN (cast to 8 bits/1 byte)
+		n := uint8(opcode & 0x00FF)
+		//Update v[x] with n
+		registers[x] = n
+		//bump prog counter
 		programCounter += 2
 		return
 
 	case 0x7000: // 7XNN
 
 	case 0x8000:
-		switch masked[1] {
+		switch opcode & 0xF00F {
 		case 0x8000: // 8XY0
 
 		case 0x8001: // 8XY1
@@ -139,7 +127,23 @@ func processOpcode() {
 
 		case 0x8003: // 8XY3
 
-		case 0x8004: // 8XY4
+		case 0x8004: // 8XY4 - adds Vy to Vx, if overflow byte, set VF to 1, otherwise 0
+
+			//Extract args
+			x := opcode & 0x0F00 >> 8
+			y := opcode & 0x00F0 >> 4
+
+			sum := uint16(registers[x] + registers[y])
+
+			//if overflow set the carry flag
+			if sum > 255 {
+				registers[15] = 1
+			} else {
+				registers[15] = 0
+			}
+
+			registers[x] += registers[y]
+			programCounter += 2
 
 		case 0x8005: // 8XY5
 
@@ -152,11 +156,8 @@ func processOpcode() {
 		}
 	case 0x9000: // 9XY0
 
-	case 0xA000: // ANNN
-		// ANNN Sets I to the address NNN
-		//Execute Opcode
-		indexRegister = opcode & 0x0FFF //zero out A?
-		//Bump the program counter
+	case 0xA000: // ANNN - Sets indexRegister to NNN
+		indexRegister = opcode & 0x0FFF
 		programCounter += 2
 		return
 	case 0xC000: // CXNN
@@ -164,14 +165,14 @@ func processOpcode() {
 	case 0xD000: // DXYN
 
 	case 0xE000:
-		switch masked[2] {
+		switch opcode & 0xF0FF {
 		case 0xE09E: // EX9E
 
 		case 0xE0A1: // EXA1
 
 		}
 	case 0xF000:
-		switch masked[2] {
+		switch opcode & 0xF0FF {
 		case 0xF007: // FX07
 
 		case 0xF00A: // FX0A
