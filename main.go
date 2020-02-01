@@ -173,15 +173,46 @@ func processOpcode() {
 
 		// 8XY0 - Sets VX to the value of VY.
 		case 0x8000:
+			x := opcode & 0x0F00 >> 8
+			y := opcode & 0x00F0 >> 4
+
+			registers[x] = registers[y]
+
+			programCounter += 2
+
+			return
 
 		// 8XY1 - Sets VX to VX or VY. (Bitwise OR operation)
 		case 0x8001:
+			x := opcode & 0x0F00 >> 8
+			y := opcode & 0x00F0 >> 4
+
+			registers[x] = registers[x] | registers[y]
+
+			programCounter += 2
+
+			return
 
 		// 8XY2 - Sets VX to VX and VY. (Bitwise AND operation)
 		case 0x8002:
+			x := opcode & 0x0F00 >> 8
+			y := opcode & 0x00F0 >> 4
 
+			registers[x] = registers[x] & registers[y]
+
+			programCounter += 2
+
+			return
 		// 8XY3 Sets VX to VX xor VY.
 		case 0x8003:
+			x := opcode & 0x0F00 >> 8
+			y := opcode & 0x00F0 >> 4
+
+			registers[x] = registers[x] ^ registers[y]
+
+			programCounter += 2
+
+			return
 
 		// 8XY4 - adds VY to VX, if overflow byte, set VF to 1, otherwise 0
 		case 0x8004:
@@ -213,13 +244,23 @@ func processOpcode() {
 		// 8XY7 - Sets VX to VY minus VX. VF is set to 0 when there's a borrow, and 1 when there isn't.
 		case 0x8007:
 
-		// 8XYE - Stores the most significant bit of VX in VF and then shifts VX to the left by 1.[
+		// 8XYE - Stores the most significant bit of VX in VF and then shifts VX to the left by 1.
 		case 0x800E:
 
 		}
 
 	// 9XY0 - Skips the next instruction if VX doesn't equal VY. (Usually the next instruction is a jump to skip a code block)
 	case 0x9000:
+		x := opcode & 0x0F00 >> 8
+		y := opcode & 0x00F0 >> 4
+
+		if registers[x] != registers[y] {
+			programCounter += 4
+		} else {
+			programCounter += 2
+		}
+
+		return
 
 	// ANNN - Sets indexRegister to NNN
 	case 0xA000:
@@ -229,15 +270,24 @@ func processOpcode() {
 
 	// BNNN - Jumps to the address NNN plus V0.
 	case 0xB000:
+		n := opcode & 0x0FFF
+		programCounter = uint16(registers[0] + uint8(n))
+		return
 
 	// CXNN - Sets VX to the result of a bitwise and operation on a random number (Typically: 0 to 255) and NN.
 	case 0xC000:
+		x := opcode & 0x0F00 >> 8
+		n := opcode & 0x00FF
+		rand := uint8(12)
+		registers[x] = uint8(n) & rand
+		programCounter += 2
+		return
 
 	// DXYN - Draws a sprite at coordinate (VX, VY) that has a width of 8 pixels and a height of N pixels.
 	// Each row of 8 pixels is read as bit-coded starting from memory location I;
 	// I value doesn’t change after the execution of this instruction. As described above,
 	// VF is set to 1 if any screen pixels are flipped from set to unset when the sprite is drawn, and to 0 if that doesn’t happen
-	case 0xD000: // DXYN (draw)
+	case 0xD000:
 		drawFlag = true
 		x := opcode & 0x0F00 >> 8
 		y := opcode & 0x00F0 >> 4
@@ -271,36 +321,52 @@ func processOpcode() {
 
 	case 0xE000:
 		switch opcode & 0xF0FF {
-		case 0xE09E: // EX9E
+		// EX9E - Skips the next instruction if the key stored in VX is pressed. (Usually the next instruction is a jump to skip a code block)
+		case 0xE09E:
 			return
-		case 0xE0A1: // EXA1
+
+			// EXA1 - Skips the next instruction if the key stored in VX isn't pressed. (Usually the next instruction is a jump to skip a code block)
+		case 0xE0A1:
 			return
 		}
 	case 0xF000:
 		switch opcode & 0xF0FF {
-		case 0xF007: // FX07
+
+		// FX07 - Sets VX to the value of the delay timer.
+		case 0xF007:
 			return
-		case 0xF00A: // FX0A
-			return
-		case 0xF015: // FX15
-			return
-		case 0xF018: // FX18
-			return
-		case 0xF01E: // FX1E
-			return
-		case 0xF029: // FX29
-			return
-		case 0xF033: // FX33 lets refactor this...
-			x := opcode + 0x0F00>>8
-			registers[indexRegister] = registers[x] / 100
-			registers[indexRegister+1] = (registers[x] / 10) % 10
-			registers[indexRegister+2] = (registers[x] % 100) % 10
-			programCounter += 2
+		// FX0A - A key press is awaited, and then stored in VX. (Blocking Operation. All instruction halted until next key event)
+		case 0xF00A:
 			return
 
-		case 0xF055: // FX55
+		// FX15 - Sets the delay timer to VX.
+		case 0xF015:
 			return
-		case 0xF065: // FX65
+
+		// FX18 - Sets the sound timer to VX.
+		case 0xF018: // FX18
+			return
+
+		// FX1E - Adds VX to I. VF is set to 1 when there is a range overflow (I+VX>0xFFF), and to 0 when there isn't.
+		case 0xF01E: // FX1E
+			return
+
+		// FX29 - Sets I to the location of the sprite for the character in VX. Characters 0-F (in hexadecimal) are represented by a 4x5 font.
+		case 0xF029: // FX29
+			return
+
+		// FX33 - Stores the binary-coded decimal representation of VX, with the most significant of three digits at the address in I,
+		// the middle digit at I plus 1, and the least significant digit at I plus 2. (In other words, take the decimal representation of VX,
+		// place the hundreds digit in memory at location in I, the tens digit at location I+1, and the ones digit at location I+2.)
+		case 0xF033:
+			return
+
+		// FX55
+		case 0xF055:
+			return
+
+		// FX65
+		case 0xF065:
 			return
 		}
 	}
