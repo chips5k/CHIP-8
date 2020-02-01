@@ -15,10 +15,11 @@ var (
 	display        [64 * 32]bool
 	delayTimer     int
 	soundTimer     int
-	stack          [16]uint16
+	stack          []uint16
 	stackPointer   uint16
 	key            [16]byte
 	ticks          int
+	drawFlag       bool
 )
 
 var fontset = [80]byte{
@@ -42,8 +43,6 @@ var fontset = [80]byte{
 
 func main() {
 
-	fmt.Println("CHIP-8 emulator")
-
 	setupGraphics()
 	setupInput()
 
@@ -52,25 +51,23 @@ func main() {
 
 	running := true
 
-	for running == true && ticks < 255 {
-		fmt.Println("Emulating....")
+	for running == true {
 
 		emulate()
 
 		// If draw flag set
-		if registers[15] != 0 {
+		if drawFlag {
 			render()
+			drawFlag = false
 		}
 
 		handleInput()
 		ticks++
 	}
-
-	fmt.Println("Exiting...")
-
 }
 
 func processOpcode() {
+
 	//Fetch opcode
 	// memory is 4096 bytes, opcode is 2 bytes, so we pull two addresses and combine them
 	// Shift first to the left 8bits, or it with the next
@@ -80,15 +77,30 @@ func processOpcode() {
 
 	case 0x0000:
 		switch opcode {
-		case 0x00E0: // 00E0
-
-		case 0x00EE: // 00EE
-		default: // 0NNN
-
+		// 00E0 - Clears the screen
+		case 0x00E0:
+			// Clear display
+			for i := 0; i < cap(display); i++ {
+				display[i] = false
+			}
+			programCounter += 2
+			drawFlag = true
+			return
+		// 00EE - Returns from a subroutine.
+		case 0x00EE:
+			programCounter = stack[stackPointer]
+			stackPointer--
+			return
+		// Calls RCA 1802 program at address NNN. Not necessary for most ROMs. skipping impl. but could use 2NNN i think....
+		default:
 		}
-	case 0x1000: // 1NNN
 
-	case 0x2000: // 2NNN - Runs a subroutine
+	// 1NNN - Jumps to address NNN.
+	case 0x1000:
+		programCounter = 0x0FFF
+		return
+	// 2NNN - Calls subroutine at NNN
+	case 0x2000:
 		//First store the current prog counter in the stack so we can track it later
 		stack[stackPointer] = programCounter
 		//Bump the stack pointer (same thing as we do with prog counter)
@@ -97,14 +109,46 @@ func processOpcode() {
 		programCounter = opcode & 0x0FFF
 		//^ Assume when the subroutine flow finishes, we pop the stack onto the prog counter and continue
 		return
-	case 0x3000: // 3XNN
 
+	// 3XNN	- Skips the next instruction if VX equals NN. (Usually the next instruction is a jump to skip a code block)
+	case 0x3000:
+		x := opcode & 0x0F00 >> 8
+		n := uint8(opcode & 0x00FF)
+
+		if registers[x] == n {
+			programCounter += 4 // this could be wrong, might be a simple case of +2 here, and no else...
+		} else {
+			programCounter += 2
+		}
+
+		return
+	// 4XNN	Skips the next instruction if VX doesn't equal NN. (Usually the next instruction is a jump to skip a code block)
 	case 0x4000: // 4XNN
+		x := opcode & 0x0F00 >> 8
+		n := uint8(opcode & 0x00FF)
 
+		if registers[x] != n {
+			programCounter += 4 // this could be wrong, might be a simple case of +2 here, and no else...
+		} else {
+			programCounter += 2
+		}
+		return
+
+	// 5XY0	Skips the next instruction if VX equals VY. (Usually the next instruction is a jump to skip a code block)
 	case 0x5000: // 5XY0
+		x := opcode & 0x0F00 >> 8
+		y := opcode & 0x00F0 >> 4
 
-	case 0x6000: // 6XNN - Sets VX to NN
-		
+		if registers[x] == registers[y] {
+			programCounter += 4 // this could be wrong, might be a simple case of +2 here, and no else...
+		} else {
+			programCounter += 2
+		}
+
+		return
+
+	// 6XNN - Sets VX to NN
+	case 0x6000:
 		//extract x (shift to get true value)
 		x := opcode & 0x0F00 >> 8
 		//extract NN (cast to 8 bits/1 byte)
@@ -115,19 +159,32 @@ func processOpcode() {
 		programCounter += 2
 		return
 
-	case 0x7000: // 7XNN
+	// 7XNN - Adds NN to VX. (Carry flag is not changed, no overflow check)
+	case 0x7000:
+		x := opcode & 0x0F00 >> 8
+		n := opcode & 0x00FF
+
+		registers[x] += uint8(n)
+		programCounter += 2
+		return
 
 	case 0x8000:
 		switch opcode & 0xF00F {
-		case 0x8000: // 8XY0
 
-		case 0x8001: // 8XY1
+		// 8XY0 - Sets VX to the value of VY.
+		case 0x8000:
 
-		case 0x8002: // 8XY2
+		// 8XY1 - Sets VX to VX or VY. (Bitwise OR operation)
+		case 0x8001:
 
-		case 0x8003: // 8XY3
+		// 8XY2 - Sets VX to VX and VY. (Bitwise AND operation)
+		case 0x8002:
 
-		case 0x8004: // 8XY4 - adds Vy to Vx, if overflow byte, set VF to 1, otherwise 0
+		// 8XY3 Sets VX to VX xor VY.
+		case 0x8003:
+
+		// 8XY4 - adds VY to VX, if overflow byte, set VF to 1, otherwise 0
+		case 0x8004:
 
 			//Extract args
 			x := opcode & 0x0F00 >> 8
@@ -145,52 +202,106 @@ func processOpcode() {
 			registers[x] += registers[y]
 			programCounter += 2
 
-		case 0x8005: // 8XY5
+			return
 
-		case 0x8006: // 8XY6
+		// 8XY5 - VY is subtracted from VX. VF is set to 0 when there's a borrow, and 1 when there isn't.
+		case 0x8005:
 
-		case 0x8007: // 8XY7
+		// 8XY6 - Stores the least significant bit of VX in VF and then shifts VX to the right by 1.
+		case 0x8006:
 
-		case 0x800E: // 8XYE
+		// 8XY7 - Sets VX to VY minus VX. VF is set to 0 when there's a borrow, and 1 when there isn't.
+		case 0x8007:
+
+		// 8XYE - Stores the most significant bit of VX in VF and then shifts VX to the left by 1.[
+		case 0x800E:
 
 		}
-	case 0x9000: // 9XY0
 
-	case 0xA000: // ANNN - Sets indexRegister to NNN
+	// 9XY0 - Skips the next instruction if VX doesn't equal VY. (Usually the next instruction is a jump to skip a code block)
+	case 0x9000:
+
+	// ANNN - Sets indexRegister to NNN
+	case 0xA000:
 		indexRegister = opcode & 0x0FFF
 		programCounter += 2
 		return
-	case 0xC000: // CXNN
 
-	case 0xD000: // DXYN
+	// BNNN - Jumps to the address NNN plus V0.
+	case 0xB000:
+
+	// CXNN - Sets VX to the result of a bitwise and operation on a random number (Typically: 0 to 255) and NN.
+	case 0xC000:
+
+	// DXYN - Draws a sprite at coordinate (VX, VY) that has a width of 8 pixels and a height of N pixels.
+	// Each row of 8 pixels is read as bit-coded starting from memory location I;
+	// I value doesn’t change after the execution of this instruction. As described above,
+	// VF is set to 1 if any screen pixels are flipped from set to unset when the sprite is drawn, and to 0 if that doesn’t happen
+	case 0xD000: // DXYN (draw)
+		drawFlag = true
+		x := opcode & 0x0F00 >> 8
+		y := opcode & 0x00F0 >> 4
+		rows := opcode & 0x000F
+
+		xCoord := registers[x]
+		yCoord := registers[y]
+
+		registers[15] = 0
+
+		for row := uint16(0); row < rows; row++ {
+
+			spriteRow := memory[indexRegister+row]
+
+			for i := 0; i < 8; i++ {
+				bit := spriteRow & (0x80 >> i)
+
+				if bit != 0 {
+					if display[xCoord+yCoord*64] {
+						registers[15] = 1
+					}
+					display[xCoord+yCoord*64] = true
+				} else {
+					display[xCoord+yCoord*64] = false
+				}
+			}
+		}
+
+		//programCounter += 2
+		return
 
 	case 0xE000:
 		switch opcode & 0xF0FF {
 		case 0xE09E: // EX9E
-
+			return
 		case 0xE0A1: // EXA1
-
+			return
 		}
 	case 0xF000:
 		switch opcode & 0xF0FF {
 		case 0xF007: // FX07
-
+			return
 		case 0xF00A: // FX0A
-
+			return
 		case 0xF015: // FX15
-
+			return
 		case 0xF018: // FX18
-
+			return
 		case 0xF01E: // FX1E
-
+			return
 		case 0xF029: // FX29
-
-		case 0xF033: // FX33
+			return
+		case 0xF033: // FX33 lets refactor this...
+			x := opcode + 0x0F00>>8
+			registers[indexRegister] = registers[x] / 100
+			registers[indexRegister+1] = (registers[x] / 10) % 10
+			registers[indexRegister+2] = (registers[x] % 100) % 10
+			programCounter += 2
+			return
 
 		case 0xF055: // FX55
-
+			return
 		case 0xF065: // FX65
-
+			return
 		}
 	}
 
@@ -216,6 +327,20 @@ func updateTimers() {
 }
 
 func render() {
+	fmt.Println("\033[33A")
+	buf := ""
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 64; x++ {
+			if display[x+y*64] {
+				buf = fmt.Sprintf("%s*", buf)
+			} else {
+				buf = fmt.Sprintf("%s ", buf)
+			}
+		}
+		buf = fmt.Sprintf("%s\n", buf)
+	}
+
+	fmt.Printf("%s", buf)
 
 }
 
@@ -224,7 +349,8 @@ func handleInput() {
 }
 
 func setupGraphics() {
-
+	drawFlag = false
+	fmt.Print("\033[H\033[2J")
 }
 
 func setupInput() {
@@ -232,8 +358,6 @@ func setupInput() {
 }
 
 func initialize() {
-
-	fmt.Println("Initializing")
 
 	programCounter = 0x200 //512
 	opcode = 0
@@ -269,20 +393,16 @@ func initialize() {
 
 func load(s string) {
 
-	fmt.Println("Loading rom: roms/PONG...")
-
 	file, err := os.Open("roms/PONG")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	memSlice := memory[512:]
-	count, err := file.Read(memSlice)
+	_, err = file.Read(memSlice)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("Read %d bytes: %q\n", count, memSlice[:count])
 	file.Close()
-
 }
