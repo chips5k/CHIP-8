@@ -15,7 +15,7 @@ var (
 	display        [64 * 32]bool
 	delayTimer     int
 	soundTimer     int
-	stack          []uint16
+	stack          [16]uint16
 	stackPointer   uint16
 	key            [16]byte
 	ticks          int
@@ -288,7 +288,6 @@ func processOpcode() {
 	// I value doesn’t change after the execution of this instruction. As described above,
 	// VF is set to 1 if any screen pixels are flipped from set to unset when the sprite is drawn, and to 0 if that doesn’t happen
 	case 0xD000:
-		drawFlag = true
 		x := opcode & 0x0F00 >> 8
 		y := opcode & 0x00F0 >> 4
 		rows := opcode & 0x000F
@@ -316,7 +315,9 @@ func processOpcode() {
 			}
 		}
 
-		//programCounter += 2
+		drawFlag = true
+		programCounter += 2
+
 		return
 
 	case 0xE000:
@@ -325,7 +326,7 @@ func processOpcode() {
 		case 0xE09E:
 			return
 
-			// EXA1 - Skips the next instruction if the key stored in VX isn't pressed. (Usually the next instruction is a jump to skip a code block)
+		// EXA1 - Skips the next instruction if the key stored in VX isn't pressed. (Usually the next instruction is a jump to skip a code block)
 		case 0xE0A1:
 			return
 		}
@@ -400,7 +401,7 @@ func render() {
 			if display[x+y*64] {
 				buf = fmt.Sprintf("%s*", buf)
 			} else {
-				buf = fmt.Sprintf("%s ", buf)
+				buf = fmt.Sprintf("%s-", buf)
 			}
 		}
 		buf = fmt.Sprintf("%s\n", buf)
