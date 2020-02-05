@@ -13,11 +13,11 @@ var (
 	indexRegister  uint16
 	programCounter uint16
 	display        [64 * 32]bool
-	delayTimer     int
-	soundTimer     int
+	delayTimer     uint8
+	soundTimer     uint8
 	stack          [16]uint16
 	stackPointer   uint16
-	key            [16]byte
+	keys           [16]bool
 	ticks          int
 	drawFlag       bool
 )
@@ -88,8 +88,8 @@ func processOpcode() {
 			return
 		// 00EE - Returns from a subroutine.
 		case 0x00EE:
-			programCounter = stack[stackPointer]
 			stackPointer--
+			programCounter = stack[stackPointer] + 2
 			return
 		// Calls RCA 1802 program at address NNN. Not necessary for most ROMs. skipping impl. but could use 2NNN i think....
 		default:
@@ -97,7 +97,7 @@ func processOpcode() {
 
 	// 1NNN - Jumps to address NNN.
 	case 0x1000:
-		programCounter = 0x0FFF
+		programCounter = opcode & 0x0FFF
 		return
 	// 2NNN - Calls subroutine at NNN
 	case 0x2000:
@@ -116,7 +116,7 @@ func processOpcode() {
 		n := uint8(opcode & 0x00FF)
 
 		if registers[x] == n {
-			programCounter += 4 // this could be wrong, might be a simple case of +2 here, and no else...
+			programCounter += 4
 		} else {
 			programCounter += 2
 		}
@@ -128,7 +128,7 @@ func processOpcode() {
 		n := uint8(opcode & 0x00FF)
 
 		if registers[x] != n {
-			programCounter += 4 // this could be wrong, might be a simple case of +2 here, and no else...
+			programCounter += 4
 		} else {
 			programCounter += 2
 		}
@@ -140,7 +140,7 @@ func processOpcode() {
 		y := opcode & 0x00F0 >> 4
 
 		if registers[x] == registers[y] {
-			programCounter += 4 // this could be wrong, might be a simple case of +2 here, and no else...
+			programCounter += 4
 		} else {
 			programCounter += 2
 		}
@@ -324,10 +324,24 @@ func processOpcode() {
 		switch opcode & 0xF0FF {
 		// EX9E - Skips the next instruction if the key stored in VX is pressed. (Usually the next instruction is a jump to skip a code block)
 		case 0xE09E:
-			return
+			x := opcode & 0x0F00
+			key := registers[x]
+			if keys[key] {
+				programCounter += 4
+			} else {
+				programCounter += 2
+			}
 
+			return
 		// EXA1 - Skips the next instruction if the key stored in VX isn't pressed. (Usually the next instruction is a jump to skip a code block)
 		case 0xE0A1:
+			x := opcode & 0x0F00
+			key := registers[x]
+			if !keys[key] {
+				programCounter += 4
+			} else {
+				programCounter += 2
+			}
 			return
 		}
 	case 0xF000:
@@ -335,39 +349,69 @@ func processOpcode() {
 
 		// FX07 - Sets VX to the value of the delay timer.
 		case 0xF007:
+			x := opcode & 0x0F00 >> 8
+			registers[x] = delayTimer
+			programCounter += 2
 			return
+
 		// FX0A - A key press is awaited, and then stored in VX. (Blocking Operation. All instruction halted until next key event)
 		case 0xF00A:
-			return
 
 		// FX15 - Sets the delay timer to VX.
 		case 0xF015:
+			x := opcode & 0x0F00 >> 8
+			delayTimer = registers[x]
+			programCounter += 2
 			return
 
 		// FX18 - Sets the sound timer to VX.
 		case 0xF018: // FX18
-			return
 
 		// FX1E - Adds VX to I. VF is set to 1 when there is a range overflow (I+VX>0xFFF), and to 0 when there isn't.
 		case 0xF01E: // FX1E
-			return
 
-		// FX29 - Sets I to the location of the sprite for the character in VX. Characters 0-F (in hexadecimal) are represented by a 4x5 font.
+		// FX29 - Sets I to the location of the sprite for the character in VX.
+		// Characters 0-F (in hexadecimal) are represented by a 4x5 font.
 		case 0xF029: // FX29
+			x := uint8(opcode & 0x0F00 >> 8)
+			indexRegister = uint16(registers[x] * 5)
+			programCounter += 2
 			return
-
 		// FX33 - Stores the binary-coded decimal representation of VX, with the most significant of three digits at the address in I,
 		// the middle digit at I plus 1, and the least significant digit at I plus 2. (In other words, take the decimal representation of VX,
 		// place the hundreds digit in memory at location in I, the tens digit at location I+1, and the ones digit at location I+2.)
 		case 0xF033:
+			x := opcode & 0x0F00 >> 8
+			d := registers[x]
+			a := uint8(d / 100)
+			b := uint8((d - a*100) / 10)
+			c := uint8(d - a*100 - b*10)
+
+			memory[indexRegister] = a
+			memory[indexRegister+1] = b
+			memory[indexRegister+2] = c
+
+			programCounter += 2
 			return
 
-		// FX55
+		// FX55 - Stores V0 to VX (including VX) in memory starting at address I.
+		// The offset from I is increased by 1 for each value written, but I itself is left unmodified
 		case 0xF055:
+			x := uint16(opcode & 0x0F00 >> 8)
+			for i := uint16(0); i <= x; i++ {
+				memory[indexRegister+i] = registers[i]
+			}
+			programCounter += 2
 			return
 
-		// FX65
+		// FX65 - Fills V0 to VX (including VX) with values from memory starting at address I.
+		// The offset from I is increased by 1 for each value written, but I itself is left unmodified.
 		case 0xF065:
+			x := uint16(opcode & 0x0F00 >> 8)
+			for i := uint16(0); i <= x; i++ {
+				registers[i] = memory[indexRegister+i]
+			}
+			programCounter += 2
 			return
 		}
 	}
@@ -394,9 +438,15 @@ func updateTimers() {
 }
 
 func render() {
-	fmt.Println("\033[33A")
+	fmt.Println("\033[36A")
 	buf := ""
+
+	for x := 0; x < 66; x++ {
+		buf = fmt.Sprintf("\n\n%s=", buf)
+	}
+	buf = fmt.Sprintf("%s\n", buf)
 	for y := 0; y < 32; y++ {
+		buf = fmt.Sprintf("%s|", buf)
 		for x := 0; x < 64; x++ {
 			if display[x+y*64] {
 				buf = fmt.Sprintf("%s*", buf)
@@ -404,8 +454,13 @@ func render() {
 				buf = fmt.Sprintf("%s-", buf)
 			}
 		}
-		buf = fmt.Sprintf("%s\n", buf)
+		buf = fmt.Sprintf("%s|\n", buf)
 	}
+
+	for x := 0; x < 66; x++ {
+		buf = fmt.Sprintf("%s=", buf)
+	}
+	buf = fmt.Sprintf("%s\n\n", buf)
 
 	fmt.Printf("%s", buf)
 
