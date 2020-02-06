@@ -236,17 +236,72 @@ func processOpcode() {
 			return
 
 		// 8XY5 - VY is subtracted from VX. VF is set to 0 when there's a borrow, and 1 when there isn't.
+		// Set Vx = Vx - Vy, set VF = NOT borrow.
+		// If Vx > Vy, then VF is set to 1, otherwise 0. Then Vy is subtracted from Vx, and the results stored in Vx.
 		case 0x8005:
+
+			//Extract args
+			x := opcode & 0x0F00 >> 8
+			y := opcode & 0x00F0 >> 4
+
+			//if overflow set the carry flag
+			if registers[x] > registers[y] {
+				registers[15] = 1
+			} else {
+				registers[15] = 0
+			}
+
+			registers[x] -= registers[y]
+			programCounter += 2
+
+			return
 
 		// 8XY6 - Stores the least significant bit of VX in VF and then shifts VX to the right by 1.
 		case 0x8006:
 
+			//Extract args
+			x := opcode & 0x0F00 >> 8
+
+			// And 1 with our number, e.g number = 01010101 & 00000001 = 1
+			lsb := registers[x] & 1
+
+			registers[0xF] = lsb
+			registers[x] = registers[x] >> 1
+
+			programCounter += 2
+			return
+
 		// 8XY7 - Sets VX to VY minus VX. VF is set to 0 when there's a borrow, and 1 when there isn't.
 		case 0x8007:
+			//Extract args
+			x := opcode & 0x0F00 >> 8
+			y := opcode & 0x00F0 >> 4
 
+			//if overflow set the carry flag
+			if registers[y] > registers[x] {
+				registers[15] = 1
+			} else {
+				registers[15] = 0
+			}
+
+			registers[x] = registers[y] - registers[x]
+			programCounter += 2
+			return
 		// 8XYE - Stores the most significant bit of VX in VF and then shifts VX to the left by 1.
 		case 0x800E:
 
+			//Extract args
+			x := opcode & 0x0F00 >> 8
+
+			// And 1 with our number, e.g number = 01010101 & 10000000 = 1 - this is probably not right... im tired though
+			// could try shifting bits completely to find it e.g shift 7 either way
+			b := registers[x] & 0b10000000
+
+			registers[0xF] = b
+			registers[x] = registers[x] << 1
+
+			programCounter += 2
+			return
 		}
 
 	// 9XY0 - Skips the next instruction if VX doesn't equal VY. (Usually the next instruction is a jump to skip a code block)
@@ -292,25 +347,25 @@ func processOpcode() {
 		y := opcode & 0x00F0 >> 4
 		rows := opcode & 0x000F
 
-		xCoord := registers[x]
-		yCoord := registers[y]
+		xCoord := uint16(registers[x])
+		yCoord := uint16(registers[y])
 
+		
 		registers[15] = 0
 
 		for row := uint16(0); row < rows; row++ {
 
 			spriteRow := memory[indexRegister+row]
-
 			for i := 0; i < 8; i++ {
 				bit := spriteRow & (0x80 >> i)
-
+				pos := uint16(xCoord + uint16(i) + 64 * yCoord + row)
 				if bit != 0 {
-					if display[xCoord+yCoord*64] {
+					if display[pos] {
 						registers[15] = 1
 					}
-					display[xCoord+yCoord*64] = true
+					display[pos] = true
 				} else {
-					display[xCoord+yCoord*64] = false
+					display[pos] = false
 				}
 			}
 		}
@@ -335,7 +390,7 @@ func processOpcode() {
 			return
 		// EXA1 - Skips the next instruction if the key stored in VX isn't pressed. (Usually the next instruction is a jump to skip a code block)
 		case 0xE0A1:
-			x := opcode & 0x0F00
+			x := opcode & 0x0F00 >> 8
 			key := registers[x]
 			if !keys[key] {
 				programCounter += 4
@@ -366,9 +421,28 @@ func processOpcode() {
 
 		// FX18 - Sets the sound timer to VX.
 		case 0xF018: // FX18
+			x := opcode & 0x0F00 >> 8
+			soundTimer = registers[x]
+			programCounter += 2
+			return
 
 		// FX1E - Adds VX to I. VF is set to 1 when there is a range overflow (I+VX>0xFFF), and to 0 when there isn't.
 		case 0xF01E: // FX1E
+
+			x := opcode & 0x0F00 >> 8
+
+			sum := uint16(indexRegister + uint16(registers[x]))
+
+			if sum > 255 {
+				registers[0xF] = 1
+			} else {
+				registers[0xF] = 0
+			}
+
+			indexRegister += uint16(registers[x])
+
+			programCounter += 2
+			return
 
 		// FX29 - Sets I to the location of the sprite for the character in VX.
 		// Characters 0-F (in hexadecimal) are represented by a 4x5 font.
@@ -415,7 +489,7 @@ func processOpcode() {
 			return
 		}
 	}
-
+	
 	panic(fmt.Sprintf("Unsupported opcode: %X", opcode))
 }
 
@@ -438,11 +512,11 @@ func updateTimers() {
 }
 
 func render() {
-	fmt.Println("\033[36A")
-	buf := ""
+	fmt.Println("\033[39A")
+	buf := "\n\n"
 
 	for x := 0; x < 66; x++ {
-		buf = fmt.Sprintf("\n\n%s=", buf)
+		buf = fmt.Sprintf("%s=", buf)
 	}
 	buf = fmt.Sprintf("%s\n", buf)
 	for y := 0; y < 32; y++ {
@@ -451,7 +525,7 @@ func render() {
 			if display[x+y*64] {
 				buf = fmt.Sprintf("%s*", buf)
 			} else {
-				buf = fmt.Sprintf("%s-", buf)
+				buf = fmt.Sprintf("%s ", buf)
 			}
 		}
 		buf = fmt.Sprintf("%s|\n", buf)
