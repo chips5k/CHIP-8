@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"github.com/nsf/termbox-go"
 )
 
 var (
@@ -43,6 +44,11 @@ var fontset = [80]byte{
 
 func main() {
 
+	if err := termbox.Init(); err != nil {
+		panic(err)
+	}
+	defer termbox.Close()
+	
 	setupGraphics()
 	setupInput()
 
@@ -57,7 +63,7 @@ func main() {
 
 		// If draw flag set
 		if drawFlag {
-			render()
+			renderTermBox()
 			drawFlag = false
 		}
 
@@ -505,13 +511,13 @@ func updateTimers() {
 
 	if soundTimer > 0 {
 		if soundTimer == 1 {
-			fmt.Println("BEEP!")
 		}
 		soundTimer--
 	}
 }
 
 func render() {
+	
 	fmt.Println("\033[39A")
 	buf := "\n\n"
 
@@ -538,6 +544,25 @@ func render() {
 
 	fmt.Printf("%s", buf)
 
+}
+
+
+func renderTermBox() {
+	
+	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
+
+
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 64; x++ {
+			if display[x+y*64] {
+				termbox.SetCell(x, y, '*', termbox.ColorWhite, termbox.ColorDefault)
+			} else {
+				termbox.SetCell(x, y, ' ', termbox.ColorDefault, termbox.ColorDefault)
+			}
+		}
+	}
+
+	termbox.Flush()
 }
 
 func handleInput() {
