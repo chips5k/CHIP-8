@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
+
 	"github.com/nsf/termbox-go"
 )
 
@@ -42,13 +44,17 @@ var fontset = [80]byte{
 	0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 }
 
+func ms() int64 {
+	return (time.Now()).UnixNano() / 1000000
+}
+
 func main() {
 
-	if err := termbox.Init(); err != nil {
-		panic(err)
-	}
-	defer termbox.Close()
-	
+	// if err := termbox.Init(); err != nil {
+	// 	panic(err)
+	// }
+	// defer termbox.Close()
+
 	setupGraphics()
 	setupInput()
 
@@ -63,10 +69,12 @@ func main() {
 
 		// If draw flag set
 		if drawFlag {
-			renderTermBox()
+			render()
+			//renderTermBox()
 			drawFlag = false
 		}
 
+		time.Sleep(1 * time.Millisecond)
 		handleInput()
 		ticks++
 	}
@@ -356,7 +364,6 @@ func processOpcode() {
 		xCoord := uint16(registers[x])
 		yCoord := uint16(registers[y])
 
-		
 		registers[15] = 0
 
 		for row := uint16(0); row < rows; row++ {
@@ -364,14 +371,13 @@ func processOpcode() {
 			spriteRow := memory[indexRegister+row]
 			for i := 0; i < 8; i++ {
 				bit := spriteRow & (0x80 >> i)
-				pos := uint16(xCoord + uint16(i) + 64 * yCoord + row)
+				pos := uint16(xCoord + uint16(i) + 64*(yCoord+row))
+
 				if bit != 0 {
 					if display[pos] {
 						registers[15] = 1
 					}
-					display[pos] = true
-				} else {
-					display[pos] = false
+					display[pos] = !display[pos] && true
 				}
 			}
 		}
@@ -385,7 +391,7 @@ func processOpcode() {
 		switch opcode & 0xF0FF {
 		// EX9E - Skips the next instruction if the key stored in VX is pressed. (Usually the next instruction is a jump to skip a code block)
 		case 0xE09E:
-			x := opcode & 0x0F00
+			x := opcode & 0x0F00 >> 8
 			key := registers[x]
 			if keys[key] {
 				programCounter += 4
@@ -495,7 +501,7 @@ func processOpcode() {
 			return
 		}
 	}
-	
+
 	panic(fmt.Sprintf("Unsupported opcode: %X", opcode))
 }
 
@@ -517,7 +523,7 @@ func updateTimers() {
 }
 
 func render() {
-	
+
 	fmt.Println("\033[39A")
 	buf := "\n\n"
 
@@ -546,11 +552,8 @@ func render() {
 
 }
 
-
 func renderTermBox() {
-	
 	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
-
 
 	for y := 0; y < 32; y++ {
 		for x := 0; x < 64; x++ {
@@ -614,7 +617,7 @@ func initialize() {
 
 func load(s string) {
 
-	file, err := os.Open("roms/PONG")
+	file, err := os.Open("roms/MERLIN")
 	if err != nil {
 		log.Fatal(err)
 	}
