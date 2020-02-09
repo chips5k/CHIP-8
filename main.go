@@ -20,9 +20,10 @@ var (
 	soundTimer     uint8
 	stack          [16]uint16
 	stackPointer   uint16
-	keys           [16]bool
+	keys           map[rune]bool
 	ticks          int
 	drawFlag       bool
+	kbChannel      = make(chan int)
 )
 
 var fontset = [80]byte{
@@ -48,18 +49,43 @@ func ms() int64 {
 	return (time.Now()).UnixNano() / 1000000
 }
 
+func keyboardListener(ch chan int) {
+	termbox.SetInputMode(termbox.InputEsc)
+
+	for {
+		ex := termbox.PollEvent()
+		fmt.Println(rune(ex.Key))
+
+		switch e := termbox.PollEvent(); e.Type {
+		case termbox.EventKey:
+			switch e.Key {
+			case termbox.Key('w'):
+				fmt.Println("PUSHED")
+				keys['w'] = true
+				termbox.Close()
+			}
+
+		case termbox.EventError:
+			panic(e.Err)
+		}
+	}
+}
+
 func main() {
 
-	// if err := termbox.Init(); err != nil {
-	// 	panic(err)
-	// }
-	// defer termbox.Close()
+	if err := termbox.Init(); err != nil {
+		panic(err)
+	}
+
+	go keyboardListener(kbChannel)
+
+	defer termbox.Close()
 
 	setupGraphics()
 	setupInput()
 
 	initialize()
-	load("pong")
+	load("ROMS/Pong")
 
 	running := true
 
@@ -70,7 +96,6 @@ func main() {
 		// If draw flag set
 		if drawFlag {
 			render()
-			//renderTermBox()
 			drawFlag = false
 		}
 
@@ -393,7 +418,7 @@ func processOpcode() {
 		case 0xE09E:
 			x := opcode & 0x0F00 >> 8
 			key := registers[x]
-			if keys[key] {
+			if keys[rune(key)] {
 				programCounter += 4
 			} else {
 				programCounter += 2
@@ -404,7 +429,7 @@ func processOpcode() {
 		case 0xE0A1:
 			x := opcode & 0x0F00 >> 8
 			key := registers[x]
-			if !keys[key] {
+			if !keys[rune(key)] {
 				programCounter += 4
 			} else {
 				programCounter += 2
@@ -423,6 +448,8 @@ func processOpcode() {
 
 		// FX0A - A key press is awaited, and then stored in VX. (Blocking Operation. All instruction halted until next key event)
 		case 0xF00A:
+			programCounter += 2
+			return
 
 		// FX15 - Sets the delay timer to VX.
 		case 0xF015:
@@ -523,36 +550,6 @@ func updateTimers() {
 }
 
 func render() {
-
-	fmt.Println("\033[39A")
-	buf := "\n\n"
-
-	for x := 0; x < 66; x++ {
-		buf = fmt.Sprintf("%s=", buf)
-	}
-	buf = fmt.Sprintf("%s\n", buf)
-	for y := 0; y < 32; y++ {
-		buf = fmt.Sprintf("%s|", buf)
-		for x := 0; x < 64; x++ {
-			if display[x+y*64] {
-				buf = fmt.Sprintf("%s*", buf)
-			} else {
-				buf = fmt.Sprintf("%s ", buf)
-			}
-		}
-		buf = fmt.Sprintf("%s|\n", buf)
-	}
-
-	for x := 0; x < 66; x++ {
-		buf = fmt.Sprintf("%s=", buf)
-	}
-	buf = fmt.Sprintf("%s\n\n", buf)
-
-	fmt.Printf("%s", buf)
-
-}
-
-func renderTermBox() {
 	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
 
 	for y := 0; y < 32; y++ {
@@ -617,7 +614,7 @@ func initialize() {
 
 func load(s string) {
 
-	file, err := os.Open("roms/MERLIN")
+	file, err := os.Open(s)
 	if err != nil {
 		log.Fatal(err)
 	}
