@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/nsf/termbox-go"
+	"github.com/gdamore/tcell"
 )
 
 var (
@@ -23,7 +23,8 @@ var (
 	keys           map[rune]bool
 	ticks          int
 	drawFlag       bool
-	kbChannel      = make(chan int)
+	kbChannel           = make(chan int)
+	running        bool = true
 )
 
 var fontset = [80]byte{
@@ -49,45 +50,47 @@ func ms() int64 {
 	return (time.Now()).UnixNano() / 1000000
 }
 
-func keyboardListener(ch chan int) {
-	termbox.SetInputMode(termbox.InputEsc)
-
+func keyboardListener(s tcell.Screen, ch chan int) {
 	for {
-		ex := termbox.PollEvent()
-		fmt.Println(rune(ex.Key))
+		ev := s.PollEvent()
 
-		switch e := termbox.PollEvent(); e.Type {
-		case termbox.EventKey:
-			switch e.Key {
-			case termbox.Key('w'):
-				fmt.Println("PUSHED")
-				keys['w'] = true
-				termbox.Close()
+		switch ev := ev.(type) {
+
+		case *tcell.EventKey:
+			if ev.Key() == tcell.KeyCtrlC {
+				s.Clear()
+				s.Fini() //Already called via fdefe
+				running = false
+
 			}
-
-		case termbox.EventError:
-			panic(e.Err)
 		}
 	}
 }
 
 func main() {
 
-	if err := termbox.Init(); err != nil {
-		panic(err)
+	var err error
+	s, err := tcell.NewScreen()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	if err := s.Init(); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
 	}
 
-	go keyboardListener(kbChannel)
+	s.Clear()
 
-	defer termbox.Close()
+	defer s.Fini()
+
+	go keyboardListener(s, kbChannel)
 
 	setupGraphics()
 	setupInput()
 
 	initialize()
-	load("ROMS/Pong")
-
-	running := true
+	load("ROMS/INVADERS")
 
 	for running == true {
 
@@ -95,7 +98,7 @@ func main() {
 
 		// If draw flag set
 		if drawFlag {
-			render()
+			render(s)
 			drawFlag = false
 		}
 
@@ -549,24 +552,25 @@ func updateTimers() {
 	}
 }
 
-func render() {
-	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
+func render(s tcell.Screen) {
+	s.Clear()
+	style := tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.ColorBlack)
 
 	for y := 0; y < 32; y++ {
 		for x := 0; x < 64; x++ {
 			if display[x+y*64] {
-				termbox.SetCell(x, y, '*', termbox.ColorWhite, termbox.ColorDefault)
+				s.SetContent(x, y, '*', nil, style)
 			} else {
-				termbox.SetCell(x, y, ' ', termbox.ColorDefault, termbox.ColorDefault)
+				s.SetContent(x, y, ' ', nil, style)
 			}
 		}
 	}
 
-	termbox.Flush()
+	s.Show()
+
 }
 
 func handleInput() {
-
 }
 
 func setupGraphics() {
