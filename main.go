@@ -4,10 +4,16 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/gdamore/tcell"
 )
+
+type keyMap struct {
+	state map[rune]bool
+	mux   sync.Mutex
+}
 
 var (
 	opcode         uint16
@@ -20,11 +26,11 @@ var (
 	soundTimer     uint8
 	stack          [16]uint16
 	stackPointer   uint16
-	keys           map[rune]bool
-	ticks          int
 	drawFlag       bool
-	kbChannel           = make(chan int)
-	running        bool = true
+	kbChannel      chan int = make(chan int)
+	running        bool     = true
+	keys           keyMap   = keyMap{state: make(map[rune]bool)}
+	debug          string   = "This is test"
 )
 
 var fontset = [80]byte{
@@ -46,23 +52,21 @@ var fontset = [80]byte{
 	0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 }
 
-func ms() int64 {
-	return (time.Now()).UnixNano() / 1000000
-}
-
 func keyboardListener(s tcell.Screen, ch chan int) {
 	for {
 		ev := s.PollEvent()
-
 		switch ev := ev.(type) {
-
 		case *tcell.EventKey:
-			if ev.Key() == tcell.KeyCtrlC {
-				s.Clear()
-				s.Fini() //Already called via fdefe
+			switch ev.Key() {
+			case tcell.KeyEsc, tcell.KeyCtrlZ, tcell.KeyCtrlC:
 				running = false
-
+			default:
+				keys.mux.Lock()
+				//debug = fmt.Sprintf("Putting something in %s - %c...", ev.Name(), ev.Rune())
+				keys.state[ev.Rune()] = true
+				keys.mux.Unlock()
 			}
+
 		}
 	}
 }
@@ -103,8 +107,7 @@ func main() {
 		}
 
 		time.Sleep(1 * time.Millisecond)
-		handleInput()
-		ticks++
+		// handleInput()
 	}
 }
 
@@ -420,23 +423,34 @@ func processOpcode() {
 		// EX9E - Skips the next instruction if the key stored in VX is pressed. (Usually the next instruction is a jump to skip a code block)
 		case 0xE09E:
 			x := opcode & 0x0F00 >> 8
-			key := registers[x]
-			if keys[rune(key)] {
+			k := getMappedKey(registers[x])
+			keys.mux.Lock()
+			//debug = fmt.Sprintf("Mapped: %c, is down: %t", k, keys.state[k])
+			if keys.state[k] {
+				//Flip the key
+				keys.state[k] = false
 				programCounter += 4
 			} else {
 				programCounter += 2
 			}
+			keys.mux.Unlock()
 
 			return
 		// EXA1 - Skips the next instruction if the key stored in VX isn't pressed. (Usually the next instruction is a jump to skip a code block)
 		case 0xE0A1:
 			x := opcode & 0x0F00 >> 8
-			key := registers[x]
-			if !keys[rune(key)] {
+
+			k := getMappedKey(registers[x])
+			keys.mux.Lock()
+			//debug = fmt.Sprintf("Mapped: %c, is down: %t", k, keys.state[k])
+			if !keys.state[k] {
 				programCounter += 4
 			} else {
+				//Flip the key
+				keys.state[k] = false
 				programCounter += 2
 			}
+			keys.mux.Unlock()
 			return
 		}
 	case 0xF000:
@@ -451,6 +465,7 @@ func processOpcode() {
 
 		// FX0A - A key press is awaited, and then stored in VX. (Blocking Operation. All instruction halted until next key event)
 		case 0xF00A:
+			debug = fmt.Sprintf("F00A waiting for key press")
 			programCounter += 2
 			return
 
@@ -566,12 +581,24 @@ func render(s tcell.Screen) {
 		}
 	}
 
+	debugStyle := tcell.StyleDefault.Foreground(tcell.ColorRed).Background(tcell.ColorBlack)
+
+	for i, c := range debug {
+		s.SetContent(20+i, 25, c, nil, debugStyle)
+	}
+
 	s.Show()
 
 }
 
-func handleInput() {
-}
+// func handleInput() {
+// 	keys.mux.Lock()
+// 	for k := range keys.state {
+// 		//debug = fmt.Sprintf("Mapped: %c, is down: %t", k, keys.state[k])
+// 		keys.state[k] = false
+// 	}
+// 	keys.mux.Unlock()
+// }
 
 func setupGraphics() {
 	drawFlag = false
@@ -630,4 +657,44 @@ func load(s string) {
 	}
 
 	file.Close()
+}
+
+func getMappedKey(keyCode uint8) rune {
+
+	switch keyCode {
+	case 0x0:
+		return '0'
+	case 0x1:
+		return '1'
+	case 0x2:
+		return '2'
+	case 0x3:
+		return '3'
+	case 0x4:
+		return '4'
+	case 0x5:
+		return '5'
+	case 0x6:
+		return '6'
+	case 0x7:
+		return '7'
+	case 0x8:
+		return '8'
+	case 0x9:
+		return '9'
+	case 0xA:
+		return 'A'
+	case 0xB:
+		return 'B'
+	case 0xC:
+		return 'C'
+	case 0xD:
+		return 'D'
+	case 0xE:
+		return 'E'
+	case 0xF:
+		return 'F'
+	}
+
+	return 'X'
 }
