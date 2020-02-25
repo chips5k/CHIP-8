@@ -70,18 +70,18 @@ var keyMap = map[rune]uint8{
 	'2': 0x2,
 	'3': 0x3,
 	'4': 0xC,
-	'Q': 0x4,
-	'W': 0x5,
-	'E': 0x6,
-	'R': 0xE,
-	'A': 0x7,
-	'S': 0x8,
-	'D': 0x9,
-	'F': 0xE,
-	'Z': 0xA,
-	'X': 0x0,
-	'C': 0xB,
-	'V': 0xF,
+	'q': 0x4,
+	'w': 0x5,
+	'e': 0x6,
+	'r': 0xE,
+	'a': 0x7,
+	's': 0x8,
+	'd': 0x9,
+	'f': 0xE,
+	'z': 0xA,
+	'x': 0x0,
+	'c': 0xB,
+	'v': 0xF,
 }
 
 func main() {
@@ -136,7 +136,7 @@ func main() {
 		memory[i] = fontset[i]
 	}
 
-	file, err := os.Open("ROMS/PONG")
+	file, err := os.Open("ROMS/TANK")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -165,7 +165,26 @@ func main() {
 
 		// If draw flag set
 		if drawFlag {
-			render(s)
+			s.Clear()
+			style := tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.ColorBlack)
+
+			for y := 0; y < 32; y++ {
+				for x := 0; x < 64; x++ {
+					if display[x+y*64] {
+						s.SetContent(x, y, '*', nil, style)
+					} else {
+						s.SetContent(x, y, ' ', nil, style)
+					}
+				}
+			}
+
+			debugStyle := tcell.StyleDefault.Foreground(tcell.ColorRed).Background(tcell.ColorBlack)
+
+			for i, c := range debug {
+				s.SetContent(20+i, 25, c, nil, debugStyle)
+			}
+
+			s.Show()
 			drawFlag = false
 		}
 
@@ -180,46 +199,23 @@ func listen(s tcell.Screen, ch chan int) {
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
 
-			key := ev.Key()
-			rune := ev.Rune()
+			k := ev.Key()
+			r := ev.Rune()
 
-			if mapped, ok := keyMap[rune]; ok {
+			if mapped, ok := keyMap[r]; ok {
+				debug = fmt.Sprintf("%x", mapped)
 				input.mux.Lock()
 				input.state[mapped] = true
 				input.mux.Unlock()
 			}
 
-			switch key {
+			switch k {
 			case tcell.KeyEsc, tcell.KeyCtrlZ, tcell.KeyCtrlC:
 				running = false
 			}
 
 		}
 	}
-}
-
-func render(s tcell.Screen) {
-	s.Clear()
-	style := tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.ColorBlack)
-
-	for y := 0; y < 32; y++ {
-		for x := 0; x < 64; x++ {
-			if display[x+y*64] {
-				s.SetContent(x, y, '*', nil, style)
-			} else {
-				s.SetContent(x, y, ' ', nil, style)
-			}
-		}
-	}
-
-	debugStyle := tcell.StyleDefault.Foreground(tcell.ColorRed).Background(tcell.ColorBlack)
-
-	for i, c := range debug {
-		s.SetContent(20+i, 25, c, nil, debugStyle)
-	}
-
-	s.Show()
-
 }
 
 func processOpcode() {
@@ -536,7 +532,6 @@ func processOpcode() {
 			x := opcode & 0x0F00 >> 8
 			k := registers[x]
 			input.mux.Lock()
-			//debug = fmt.Sprintf("Mapped: %c, is down: %t", k, keys.state[k])
 			if input.state[k] {
 				//Flip the key
 				input.state[k] = false
@@ -552,7 +547,6 @@ func processOpcode() {
 			x := opcode & 0x0F00 >> 8
 			k := registers[x]
 			input.mux.Lock()
-			//debug = fmt.Sprintf("Mapped: %c, is down: %t", k, input.state[k])
 			if !input.state[k] {
 				programCounter += 4
 			} else {
