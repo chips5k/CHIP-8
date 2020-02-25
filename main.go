@@ -10,8 +10,8 @@ import (
 	"github.com/gdamore/tcell"
 )
 
-type keyMap struct {
-	state map[rune]bool
+type keypad struct {
+	state map[uint8]bool
 	mux   sync.Mutex
 }
 
@@ -29,7 +29,7 @@ var (
 	drawFlag       bool
 	kbChannel      chan int = make(chan int)
 	running        bool     = true
-	keys           keyMap   = keyMap{state: make(map[rune]bool)}
+	input          keypad   = keypad{state: make(map[uint8]bool)}
 	debug          string   = "This is test"
 )
 
@@ -52,23 +52,36 @@ var fontset = [80]byte{
 	0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 }
 
-func keyboardListener(s tcell.Screen, ch chan int) {
-	for {
-		ev := s.PollEvent()
-		switch ev := ev.(type) {
-		case *tcell.EventKey:
-			switch ev.Key() {
-			case tcell.KeyEsc, tcell.KeyCtrlZ, tcell.KeyCtrlC:
-				running = false
-			default:
-				keys.mux.Lock()
-				//debug = fmt.Sprintf("Putting something in %s - %c...", ev.Name(), ev.Rune())
-				keys.state[ev.Rune()] = true
-				keys.mux.Unlock()
-			}
+/*
+Keypad                   Keyboard
++-+-+-+-+                +-+-+-+-+
+|1|2|3|C|                |1|2|3|4|
++-+-+-+-+                +-+-+-+-+
+|4|5|6|D|                |Q|W|E|R|
++-+-+-+-+       =>       +-+-+-+-+
+|7|8|9|E|                |A|S|D|F|
++-+-+-+-+                +-+-+-+-+
+|A|0|B|F|                |Z|X|C|V|
++-+-+-+-+                +-+-+-+-+
+*/
 
-		}
-	}
+var keyMap = map[rune]uint8{
+	'1': 0x1,
+	'2': 0x2,
+	'3': 0x3,
+	'4': 0xC,
+	'Q': 0x4,
+	'W': 0x5,
+	'E': 0x6,
+	'R': 0xE,
+	'A': 0x7,
+	'S': 0x8,
+	'D': 0x9,
+	'F': 0xE,
+	'Z': 0xA,
+	'X': 0x0,
+	'C': 0xB,
+	'V': 0xF,
 }
 
 func main() {
@@ -88,17 +101,67 @@ func main() {
 
 	defer s.Fini()
 
-	go keyboardListener(s, kbChannel)
+	go listen(s, kbChannel)
 
-	setupGraphics()
-	setupInput()
+	drawFlag = false
+	fmt.Print("\033[H\033[2J")
 
-	initialize()
-	load("ROMS/INVADERS")
+	programCounter = 0x200 //512
+	opcode = 0
+	indexRegister = 0
+	stackPointer = 0
+
+	// Clear display
+	for i := 0; i < cap(display); i++ {
+		display[i] = false
+	}
+
+	// Clear stack
+	for i := 0; i < cap(stack); i++ {
+		stack[i] = 0
+	}
+
+	// Clear registers V0-VF
+	for i := 0; i < cap(registers); i++ {
+		registers[i] = 0
+	}
+
+	// Clear memory
+	for i := 0; i < cap(memory); i++ {
+		memory[i] = 0
+	}
+
+	// Load fontset
+	for i := 0; i < cap(fontset); i++ {
+		memory[i] = fontset[i]
+	}
+
+	file, err := os.Open("ROMS/PONG")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	memSlice := memory[512:]
+	_, err = file.Read(memSlice)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	file.Close()
 
 	for running == true {
 
-		emulate()
+		processOpcode()
+
+		if delayTimer > 0 {
+			delayTimer--
+		}
+
+		if soundTimer > 0 {
+			if soundTimer == 1 {
+			}
+			soundTimer--
+		}
 
 		// If draw flag set
 		if drawFlag {
@@ -106,9 +169,57 @@ func main() {
 			drawFlag = false
 		}
 
+		//Slow down!
 		time.Sleep(1 * time.Millisecond)
-		// handleInput()
 	}
+}
+
+func listen(s tcell.Screen, ch chan int) {
+	for {
+		ev := s.PollEvent()
+		switch ev := ev.(type) {
+		case *tcell.EventKey:
+
+			key := ev.Key()
+			rune := ev.Rune()
+
+			if mapped, ok := keyMap[rune]; ok {
+				input.mux.Lock()
+				input.state[mapped] = true
+				input.mux.Unlock()
+			}
+
+			switch key {
+			case tcell.KeyEsc, tcell.KeyCtrlZ, tcell.KeyCtrlC:
+				running = false
+			}
+
+		}
+	}
+}
+
+func render(s tcell.Screen) {
+	s.Clear()
+	style := tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.ColorBlack)
+
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 64; x++ {
+			if display[x+y*64] {
+				s.SetContent(x, y, '*', nil, style)
+			} else {
+				s.SetContent(x, y, ' ', nil, style)
+			}
+		}
+	}
+
+	debugStyle := tcell.StyleDefault.Foreground(tcell.ColorRed).Background(tcell.ColorBlack)
+
+	for i, c := range debug {
+		s.SetContent(20+i, 25, c, nil, debugStyle)
+	}
+
+	s.Show()
+
 }
 
 func processOpcode() {
@@ -423,34 +534,33 @@ func processOpcode() {
 		// EX9E - Skips the next instruction if the key stored in VX is pressed. (Usually the next instruction is a jump to skip a code block)
 		case 0xE09E:
 			x := opcode & 0x0F00 >> 8
-			k := getMappedKey(registers[x])
-			keys.mux.Lock()
+			k := registers[x]
+			input.mux.Lock()
 			//debug = fmt.Sprintf("Mapped: %c, is down: %t", k, keys.state[k])
-			if keys.state[k] {
+			if input.state[k] {
 				//Flip the key
-				keys.state[k] = false
+				input.state[k] = false
 				programCounter += 4
 			} else {
 				programCounter += 2
 			}
-			keys.mux.Unlock()
+			input.mux.Unlock()
 
 			return
 		// EXA1 - Skips the next instruction if the key stored in VX isn't pressed. (Usually the next instruction is a jump to skip a code block)
 		case 0xE0A1:
 			x := opcode & 0x0F00 >> 8
-
-			k := getMappedKey(registers[x])
-			keys.mux.Lock()
-			//debug = fmt.Sprintf("Mapped: %c, is down: %t", k, keys.state[k])
-			if !keys.state[k] {
+			k := registers[x]
+			input.mux.Lock()
+			//debug = fmt.Sprintf("Mapped: %c, is down: %t", k, input.state[k])
+			if !input.state[k] {
 				programCounter += 4
 			} else {
 				//Flip the key
-				keys.state[k] = false
+				input.state[k] = false
 				programCounter += 2
 			}
-			keys.mux.Unlock()
+			input.mux.Unlock()
 			return
 		}
 	case 0xF000:
@@ -548,153 +658,4 @@ func processOpcode() {
 	}
 
 	panic(fmt.Sprintf("Unsupported opcode: %X", opcode))
-}
-
-func emulate() {
-	processOpcode()
-	updateTimers()
-}
-
-func updateTimers() {
-	if delayTimer > 0 {
-		delayTimer--
-	}
-
-	if soundTimer > 0 {
-		if soundTimer == 1 {
-		}
-		soundTimer--
-	}
-}
-
-func render(s tcell.Screen) {
-	s.Clear()
-	style := tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.ColorBlack)
-
-	for y := 0; y < 32; y++ {
-		for x := 0; x < 64; x++ {
-			if display[x+y*64] {
-				s.SetContent(x, y, '*', nil, style)
-			} else {
-				s.SetContent(x, y, ' ', nil, style)
-			}
-		}
-	}
-
-	debugStyle := tcell.StyleDefault.Foreground(tcell.ColorRed).Background(tcell.ColorBlack)
-
-	for i, c := range debug {
-		s.SetContent(20+i, 25, c, nil, debugStyle)
-	}
-
-	s.Show()
-
-}
-
-// func handleInput() {
-// 	keys.mux.Lock()
-// 	for k := range keys.state {
-// 		//debug = fmt.Sprintf("Mapped: %c, is down: %t", k, keys.state[k])
-// 		keys.state[k] = false
-// 	}
-// 	keys.mux.Unlock()
-// }
-
-func setupGraphics() {
-	drawFlag = false
-	fmt.Print("\033[H\033[2J")
-}
-
-func setupInput() {
-
-}
-
-func initialize() {
-
-	programCounter = 0x200 //512
-	opcode = 0
-	indexRegister = 0
-	stackPointer = 0
-
-	// Clear display
-	for i := 0; i < cap(display); i++ {
-		display[i] = false
-	}
-
-	// Clear stack
-	for i := 0; i < cap(stack); i++ {
-		stack[i] = 0
-	}
-
-	// Clear registers V0-VF
-	for i := 0; i < cap(registers); i++ {
-		registers[i] = 0
-	}
-
-	// Clear memory
-	for i := 0; i < cap(memory); i++ {
-		memory[i] = 0
-	}
-
-	// Load fontset
-	for i := 0; i < cap(fontset); i++ {
-		memory[i] = fontset[i]
-	}
-
-}
-
-func load(s string) {
-
-	file, err := os.Open(s)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	memSlice := memory[512:]
-	_, err = file.Read(memSlice)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	file.Close()
-}
-
-func getMappedKey(keyCode uint8) rune {
-
-	switch keyCode {
-	case 0x0:
-		return '0'
-	case 0x1:
-		return '1'
-	case 0x2:
-		return '2'
-	case 0x3:
-		return '3'
-	case 0x4:
-		return '4'
-	case 0x5:
-		return '5'
-	case 0x6:
-		return '6'
-	case 0x7:
-		return '7'
-	case 0x8:
-		return '8'
-	case 0x9:
-		return '9'
-	case 0xA:
-		return 'A'
-	case 0xB:
-		return 'B'
-	case 0xC:
-		return 'C'
-	case 0xD:
-		return 'D'
-	case 0xE:
-		return 'E'
-	case 0xF:
-		return 'F'
-	}
-
-	return 'X'
 }
