@@ -11,8 +11,25 @@ import (
 )
 
 type keypad struct {
-	state map[uint8]bool
-	mux   sync.Mutex
+	keys map[uint8]bool
+	mux  sync.Mutex
+}
+
+type keymap map[rune]uint8
+
+type chip8 struct {
+	memory         [4096]uint8
+	registers      [16]uint8
+	indexRegister  uint16
+	programCounter uint16
+	display        [64 * 32]bool
+	delayTimer     uint8
+	soundTimer     uint8
+	stack          [16]uint16
+	stackPointer   uint16
+	drawFlag       bool
+	running        bool
+	debugString    string
 }
 
 var (
@@ -27,10 +44,8 @@ var (
 	stack          [16]uint16
 	stackPointer   uint16
 	drawFlag       bool
-	kbChannel      chan int = make(chan int)
-	running        bool     = true
-	input          keypad   = keypad{state: make(map[uint8]bool)}
-	debug          string   = "This is test"
+	running        bool   = true
+	debug          string = ""
 )
 
 var fontset = [80]byte{
@@ -52,40 +67,7 @@ var fontset = [80]byte{
 	0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 }
 
-/*
-Keypad                   Keyboard
-+-+-+-+-+                +-+-+-+-+
-|1|2|3|C|                |1|2|3|4|
-+-+-+-+-+                +-+-+-+-+
-|4|5|6|D|                |Q|W|E|R|
-+-+-+-+-+       =>       +-+-+-+-+
-|7|8|9|E|                |A|S|D|F|
-+-+-+-+-+                +-+-+-+-+
-|A|0|B|F|                |Z|X|C|V|
-+-+-+-+-+                +-+-+-+-+
-*/
-
-var keyMap = map[rune]uint8{
-	'1': 0x1,
-	'2': 0x2,
-	'3': 0x3,
-	'4': 0xC,
-	'q': 0x4,
-	'w': 0x5,
-	'e': 0x6,
-	'r': 0xE,
-	'a': 0x7,
-	's': 0x8,
-	'd': 0x9,
-	'f': 0xE,
-	'z': 0xA,
-	'x': 0x0,
-	'c': 0xB,
-	'v': 0xF,
-}
-
-func main() {
-
+func setupScreen() tcell.Screen {
 	var err error
 	s, err := tcell.NewScreen()
 	if err != nil {
@@ -99,9 +81,86 @@ func main() {
 
 	s.Clear()
 
-	defer s.Fini()
+	return s
+}
 
-	go listen(s, kbChannel)
+func setupInput(s tcell.Screen, kp keypad, km keymap) {
+	go func() {
+		for running {
+			ev := s.PollEvent()
+			switch ev := ev.(type) {
+			case *tcell.EventKey:
+
+				k := ev.Key()
+				r := ev.Rune()
+
+				if mapped, ok := km[r]; ok {
+					debug = fmt.Sprintf("%x", mapped)
+					kp.press(mapped)
+				}
+
+				switch k {
+				case tcell.KeyEsc, tcell.KeyCtrlZ, tcell.KeyCtrlC:
+					running = false
+				}
+
+			}
+		}
+	}()
+}
+
+func newKeymap() keymap {
+	return keymap{
+		'1': 0x1,
+		'2': 0x2,
+		'3': 0x3,
+		'4': 0xC,
+		'q': 0x4,
+		'w': 0x5,
+		'e': 0x6,
+		'r': 0xE,
+		'a': 0x7,
+		's': 0x8,
+		'd': 0x9,
+		'f': 0xE,
+		'z': 0xA,
+		'x': 0x0,
+		'c': 0xB,
+		'v': 0xF,
+	}
+}
+
+func newKeypad() keypad {
+	return keypad{keys: make(map[uint8]bool)}
+}
+
+func (kp keypad) press(k uint8) {
+	kp.mux.Lock()
+	kp.keys[k] = true
+	kp.mux.Unlock()
+}
+
+func (kp keypad) state(k uint8) bool {
+	s := false
+	kp.mux.Lock()
+	s = kp.keys[k]
+	kp.mux.Unlock()
+	return s
+}
+
+func (kp keypad) release(k uint8) {
+	kp.mux.Lock()
+	kp.keys[k] = false
+	kp.mux.Unlock()
+}
+
+func main() {
+
+	s := setupScreen()
+	km := newKeymap()
+	kp := newKeypad()
+
+	setupInput(s, kp, km)
 
 	drawFlag = false
 	fmt.Print("\033[H\033[2J")
@@ -149,9 +208,9 @@ func main() {
 
 	file.Close()
 
-	for running == true {
+	for running {
 
-		processOpcode()
+		processOpcode(kp)
 
 		if delayTimer > 0 {
 			delayTimer--
@@ -191,34 +250,11 @@ func main() {
 		//Slow down!
 		time.Sleep(1 * time.Millisecond)
 	}
+
+	s.Fini()
 }
 
-func listen(s tcell.Screen, ch chan int) {
-	for {
-		ev := s.PollEvent()
-		switch ev := ev.(type) {
-		case *tcell.EventKey:
-
-			k := ev.Key()
-			r := ev.Rune()
-
-			if mapped, ok := keyMap[r]; ok {
-				debug = fmt.Sprintf("%x", mapped)
-				input.mux.Lock()
-				input.state[mapped] = true
-				input.mux.Unlock()
-			}
-
-			switch k {
-			case tcell.KeyEsc, tcell.KeyCtrlZ, tcell.KeyCtrlC:
-				running = false
-			}
-
-		}
-	}
-}
-
-func processOpcode() {
+func processOpcode(kp keypad) {
 
 	//Fetch opcode
 	// memory is 4096 bytes, opcode is 2 bytes, so we pull two addresses and combine them
@@ -531,30 +567,25 @@ func processOpcode() {
 		case 0xE09E:
 			x := opcode & 0x0F00 >> 8
 			k := registers[x]
-			input.mux.Lock()
-			if input.state[k] {
-				//Flip the key
-				input.state[k] = false
+
+			if kp.state(k) {
+				kp.release(k)
 				programCounter += 4
 			} else {
 				programCounter += 2
 			}
-			input.mux.Unlock()
 
 			return
 		// EXA1 - Skips the next instruction if the key stored in VX isn't pressed. (Usually the next instruction is a jump to skip a code block)
 		case 0xE0A1:
 			x := opcode & 0x0F00 >> 8
 			k := registers[x]
-			input.mux.Lock()
-			if !input.state[k] {
+			if !kp.state(k) {
 				programCounter += 4
 			} else {
-				//Flip the key
-				input.state[k] = false
+				kp.release(k)
 				programCounter += 2
 			}
-			input.mux.Unlock()
 			return
 		}
 	case 0xF000:
