@@ -84,7 +84,7 @@ func setupScreen() tcell.Screen {
 	return s
 }
 
-func setupInput(s tcell.Screen, kp keypad, km keymap) {
+func setupInput(s tcell.Screen, kp *keypad, km keymap) {
 	go func() {
 		for running {
 			ev := s.PollEvent()
@@ -130,17 +130,17 @@ func newKeymap() keymap {
 	}
 }
 
-func newKeypad() keypad {
-	return keypad{keys: make(map[uint8]bool)}
+func newKeypad() *keypad {
+	return &keypad{keys: make(map[uint8]bool)}
 }
 
-func (kp keypad) press(k uint8) {
+func (kp *keypad) press(k uint8) {
 	kp.mux.Lock()
 	kp.keys[k] = true
 	kp.mux.Unlock()
 }
 
-func (kp keypad) state(k uint8) bool {
+func (kp *keypad) state(k uint8) bool {
 	s := false
 	kp.mux.Lock()
 	s = kp.keys[k]
@@ -148,7 +148,7 @@ func (kp keypad) state(k uint8) bool {
 	return s
 }
 
-func (kp keypad) release(k uint8) {
+func (kp *keypad) release(k uint8) {
 	kp.mux.Lock()
 	kp.keys[k] = false
 	kp.mux.Unlock()
@@ -254,7 +254,7 @@ func main() {
 	s.Fini()
 }
 
-func processOpcode(kp keypad) {
+func processOpcode(kp *keypad) {
 
 	//Fetch opcode
 	// memory is 4096 bytes, opcode is 2 bytes, so we pull two addresses and combine them
