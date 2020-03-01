@@ -10,31 +10,23 @@ import (
 	"github.com/gdamore/tcell"
 )
 
-type keypad struct {
-	keys map[uint8]bool
-	mux  sync.Mutex
-}
-
-type keymap map[rune]uint8
-
-type machine struct {
-	instruction    uint16
-	memory         [4096]uint8
-	registers      [16]uint8
-	indexRegister  uint16
-	programCounter uint16
-	display        [64 * 32]bool
-	delayTimer     uint8
-	soundTimer     uint8
-	stack          [16]uint16
-	stackPointer   uint16
-	drawFlag       bool
-	running        bool
-	debugString    string
-	keypad         *keypad
-}
-
 type font [80]byte
+type renderer func(m *machine)
+
+func main() {
+
+	f := getDefaultFont()
+	s := setupScreen()
+	km := newKeymap()
+	m := newMachine(f)
+	setupInput(s, m, km)
+
+	m.loadRom("ROMS/TANK")
+
+	m.run(render(s))
+
+	s.Fini()
+}
 
 func getDefaultFont() font {
 	return font{
@@ -99,25 +91,34 @@ func setupInput(s tcell.Screen, m *machine, km keymap) {
 	}()
 }
 
-func newKeymap() keymap {
-	return keymap{
-		'1': 0x1,
-		'2': 0x2,
-		'3': 0x3,
-		'4': 0xC,
-		'q': 0x4,
-		'w': 0x5,
-		'e': 0x6,
-		'r': 0xE,
-		'a': 0x7,
-		's': 0x8,
-		'd': 0x9,
-		'f': 0xE,
-		'z': 0xA,
-		'x': 0x0,
-		'c': 0xB,
-		'v': 0xF,
+func render(s tcell.Screen) func(m *machine) {
+	return func(m *machine) {
+		s.Clear()
+		style := tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.ColorBlack)
+
+		for y := 0; y < 32; y++ {
+			for x := 0; x < 64; x++ {
+				if m.display[x+y*64] {
+					s.SetContent(x, y, '*', nil, style)
+				} else {
+					s.SetContent(x, y, ' ', nil, style)
+				}
+			}
+		}
+
+		debugStyle := tcell.StyleDefault.Foreground(tcell.ColorRed).Background(tcell.ColorBlack)
+
+		for i, c := range m.debugString {
+			s.SetContent(20+i, 25, c, nil, debugStyle)
+		}
+
+		s.Show()
 	}
+}
+
+type keypad struct {
+	keys map[uint8]bool
+	mux  sync.Mutex
 }
 
 func newKeypad() *keypad {
@@ -144,52 +145,50 @@ func (kp *keypad) release(k uint8) {
 	kp.mux.Unlock()
 }
 
-func (m *machine) clearDisplay() {
-	for i := 0; i < cap(m.display); i++ {
-		m.display[i] = false
+type keymap map[rune]uint8
+
+func newKeymap() keymap {
+	return keymap{
+		'1': 0x1,
+		'2': 0x2,
+		'3': 0x3,
+		'4': 0xC,
+		'q': 0x4,
+		'w': 0x5,
+		'e': 0x6,
+		'r': 0xE,
+		'a': 0x7,
+		's': 0x8,
+		'd': 0x9,
+		'f': 0xE,
+		'z': 0xA,
+		'x': 0x0,
+		'c': 0xB,
+		'v': 0xF,
 	}
 }
 
-func (m *machine) clearStack() {
-	for i := 0; i < cap(m.stack); i++ {
-		m.stack[i] = 0
-	}
+type machine struct {
+	instruction    uint16
+	memory         [4096]uint8
+	registers      [16]uint8
+	indexRegister  uint16
+	programCounter uint16
+	display        [64 * 32]bool
+	delayTimer     uint8
+	soundTimer     uint8
+	stack          [16]uint16
+	stackPointer   uint16
+	drawFlag       bool
+	running        bool
+	debugString    string
+	keypad         *keypad
 }
 
-func (m *machine) clearRegisters() {
-	for i := 0; i < cap(m.registers); i++ {
-		m.registers[i] = 0
-	}
-}
-
-func (m *machine) clearMemory() {
-	for i := 0; i < cap(m.memory); i++ {
-		m.memory[i] = 0
-	}
-}
-
-func (m *machine) loadFont(f font) {
-	for i := 0; i < cap(f); i++ {
-		m.memory[i] = f[i]
-	}
-}
-
-func (m *machine) clearKeypad() {
-	m.keypad.clear()
-}
-
-func (kp *keypad) clear() {
-	kp.mux.Lock()
-
-	for k, _ := range kp.keys {
-		kp.keys[k] = false
-	}
-
-	kp.mux.Unlock()
-}
-
-func (m *machine) pressKey(key uint8) {
-	m.keypad.press(key)
+func newMachine(f font) *machine {
+	m := &machine{keypad: newKeypad()}
+	m.init(f)
+	return m
 }
 
 func (m *machine) init(f font) {
@@ -207,12 +206,6 @@ func (m *machine) init(f font) {
 	m.clearKeypad()
 }
 
-func newMachine(f font) *machine {
-	m := &machine{keypad: newKeypad()}
-	m.init(f)
-	return m
-}
-
 func (m *machine) loadRom(path string) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -227,8 +220,6 @@ func (m *machine) loadRom(path string) {
 
 	file.Close()
 }
-
-type renderer func(m *machine)
 
 func (m *machine) render(render renderer) {
 	if m.drawFlag {
@@ -245,61 +236,6 @@ func (m *machine) run(r renderer) {
 		m.updateSoundTimer()
 		time.Sleep(1 * time.Millisecond)
 	}
-}
-
-func (m *machine) updateDelayTimer() {
-	if m.delayTimer > 0 {
-		m.delayTimer--
-	}
-}
-
-func (m *machine) updateSoundTimer() {
-	if m.soundTimer > 0 {
-		if m.soundTimer == 1 {
-
-		}
-		m.soundTimer--
-	}
-}
-
-func render(s tcell.Screen) func(m *machine) {
-	return func(m *machine) {
-		s.Clear()
-		style := tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.ColorBlack)
-
-		for y := 0; y < 32; y++ {
-			for x := 0; x < 64; x++ {
-				if m.display[x+y*64] {
-					s.SetContent(x, y, '*', nil, style)
-				} else {
-					s.SetContent(x, y, ' ', nil, style)
-				}
-			}
-		}
-
-		debugStyle := tcell.StyleDefault.Foreground(tcell.ColorRed).Background(tcell.ColorBlack)
-
-		for i, c := range m.debugString {
-			s.SetContent(20+i, 25, c, nil, debugStyle)
-		}
-
-		s.Show()
-	}
-}
-
-func main() {
-
-	f := getDefaultFont()
-	s := setupScreen()
-	km := newKeymap()
-	m := newMachine(f)
-	setupInput(s, m, km)
-
-	m.loadRom("ROMS/TANK")
-
-	m.run(render(s))
-
-	s.Fini()
 }
 
 func (m *machine) processInstruction() {
@@ -730,4 +666,71 @@ func (m *machine) processInstruction() {
 	}
 
 	panic(fmt.Sprintf("Unsupported instruction: %X", m.instruction))
+}
+
+func (m *machine) updateDelayTimer() {
+	if m.delayTimer > 0 {
+		m.delayTimer--
+	}
+}
+
+func (m *machine) updateSoundTimer() {
+	if m.soundTimer > 0 {
+		if m.soundTimer == 1 {
+
+		}
+		m.soundTimer--
+	}
+}
+
+func (m *machine) clearDisplay() {
+	for i := 0; i < cap(m.display); i++ {
+		m.display[i] = false
+	}
+}
+
+func (m *machine) clearStack() {
+	for i := 0; i < cap(m.stack); i++ {
+		m.stack[i] = 0
+	}
+}
+
+func (m *machine) clearRegisters() {
+	for i := 0; i < cap(m.registers); i++ {
+		m.registers[i] = 0
+	}
+}
+
+func (m *machine) clearMemory() {
+	for i := 0; i < cap(m.memory); i++ {
+		m.memory[i] = 0
+	}
+}
+
+func (m *machine) loadFont(f font) {
+	for i := 0; i < cap(f); i++ {
+		m.memory[i] = f[i]
+	}
+}
+
+func (m *machine) pressKey(key uint8) {
+	m.keypad.press(key)
+}
+
+func (m *machine) releaseKey(key uint8) {
+	m.keypad.release(key)
+}
+
+func (m *machine) clearKeypad() {
+	m.keypad.clear()
+}
+
+func (kp *keypad) clear() {
+	kp.mux.Lock()
+
+	for k, _ := range kp.keys {
+		kp.keys[k] = false
+	}
+
+	kp.mux.Unlock()
 }
